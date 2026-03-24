@@ -5,87 +5,143 @@
 <title>Live Trending Keywords Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
+/* Your existing styles + improvements */
 body {
-    font-family: Arial;
-    background: #0f172a;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
     color: white;
     margin: 0;
     padding: 20px;
+    min-height: 100vh;
 }
-h1 {
-    text-align: center;
-}
-.container {
-    max-width: 1200px;
-    margin: auto;
-}
-.card {
-    background: #1e293b;
-    padding: 20px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-}
-.keyword {
-    display: inline-block;
-    background: #334155;
-    padding: 8px 12px;
-    margin: 5px;
+.status {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #10b981;
+    padding: 10px 15px;
     border-radius: 20px;
     font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+.status.error {
+    background: #ef4444;
+}
+.card {
+    background: rgba(30, 41, 59, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid #334155;
+    /* ... rest of your styles */
+}
+.keyword {
+    /* ... */
+    transition: transform 0.2s, background 0.2s;
+    cursor: pointer;
+}
+.keyword:hover {
+    transform: scale(1.05);
+    background: #3b82f6;
+}
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #94a3b8;
 }
 </style>
 </head>
 
 <body>
-
-<h1>🔥 Live Trending Keywords</h1>
+<h1>🔥 Live Trending Keywords Dashboard</h1>
+<div class="status" id="status"></div>
 
 <div class="container">
-
 <div class="card">
-    <h2>Top Keywords</h2>
-    <div id="keywords"></div>
+    <h2>🏆 Top 20 Keywords</h2>
+    <div id="keywords"><div class="loading">Loading...</div></div>
+    <small>Last updated: <span id="lastUpdate">--</span></small>
 </div>
 
 <div class="card">
-    <h2>Trending Chart</h2>
+    <h2>📈 Trending Chart</h2>
     <canvas id="chart"></canvas>
 </div>
-
 </div>
 
 <script>
 const API_URL = "https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=T2CSW&client_ip=request_ip";
 
 let chart;
+let lastUpdate = 0;
 
 async function fetchData() {
-    const res = await fetch(API_URL);
-    const data = await res.json();
+    try {
+        showStatus("Fetching data...", "#f59e0b");
+        
+        const res = await fetch(API_URL, {
+            cache: 'no-cache'
+        });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (!data.results || !Array.isArray(data.results)) {
+            throw new Error("Invalid API response");
+        }
 
+        processKeywords(data.results);
+        showStatus(`Updated: ${new Date().toLocaleTimeString()}`, "#10b981");
+        document.getElementById("lastUpdate").textContent = 
+            new Date().toLocaleTimeString();
+            
+    } catch (error) {
+        console.error("Fetch error:", error);
+        showStatus(`Error: ${error.message}`, "#ef4444");
+    }
+}
+
+function processKeywords(rooms) {
     let keywordCount = {};
+    
+    // Stop words to filter common words
+    const stopWords = {
+        'the':1, 'and':1, 'for':1, 'are':1, 'but':1, 'not':1, 
+        'you':1, 'all':1, 'can':1, 'her':1, 'was':1, 'one':1,
+        'our':1, 'out':1, 'day':1, 'get':1, 'has':1, 'him':1,
+        'his':1, 'how':1, 'its':1, 'may':1, 'new':1, 'now':1,
+        'old':1, 'see':1, 'two':1, 'who':1, 'boy':1, 'did':1,
+        'its':1, 'let':1, 'put':1, 'say':1, 'she':1, 'too':1,
+        'use':1, 'come':1, 'even':1, 'want':1
+    };
 
-    data.results.forEach(room => {
-        // TAGS
+    rooms.forEach(room => {
+        // TAGS (weighted higher)
         (room.tags || []).forEach(tag => {
-            tag = tag.toLowerCase();
-            keywordCount[tag] = (keywordCount[tag] || 0) + room.num_users;
+            tag = tag.toLowerCase().trim();
+            if (tag.length >= 3) {
+                keywordCount[tag] = (keywordCount[tag] || 0) + room.num_users;
+            }
         });
 
-        // SUBJECT
+        // SUBJECT (weighted lower, filter stop words)
         let words = (room.room_subject || "")
             .toLowerCase()
+            .replace(/[^\w\s]/g, ' ')
             .match(/\b[a-z]{4,}\b/g);
 
         if (words) {
             words.forEach(word => {
-                keywordCount[word] = (keywordCount[word] || 0) + 1;
+                if (!stopWords[word] && word.length >= 4) {
+                    keywordCount[word] = (keywordCount[word] || 0) + 1;
+                }
             });
         }
     });
 
-    // SORT
+    // Sort by score DESC, take top 20
     let sorted = Object.entries(keywordCount)
+        .filter(([key]) => key.length >= 3)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 20);
 
@@ -94,12 +150,16 @@ async function fetchData() {
 
 function updateUI(data) {
     const container = document.getElementById("keywords");
-    container.innerHTML = "";
+    container.innerHTML = data.length ? "" : '<div class="loading">No data available</div>';
 
-    data.forEach(([key, val]) => {
+    data.forEach(([key, val], i) => {
         const el = document.createElement("div");
         el.className = "keyword";
-        el.innerText = `${key} (${val})`;
+        el.innerHTML = `
+            <strong>#${i+1}</strong> ${key} 
+            <span style="color: #10b981">(${val.toLocaleString()})</span>
+        `;
+        el.title = `Score: ${val}`;
         container.appendChild(el);
     });
 
@@ -107,27 +167,63 @@ function updateUI(data) {
 }
 
 function updateChart(data) {
+    const ctx = document.getElementById("chart");
     const labels = data.map(d => d[0]);
     const values = data.map(d => d[1]);
 
     if (chart) chart.destroy();
 
-    chart = new Chart(document.getElementById("chart"), {
+    chart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
             datasets: [{
-                label: "Trending Score",
-                data: values
+                label: "Popularity Score",
+                data: values,
+                backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                borderColor: 'rgba(59, 130, 246, 1)',
+                borderWidth: 2,
+                borderRadius: 8
             }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#94a3b8' },
+                    grid: { color: '#334155' }
+                },
+                x: {
+                    ticks: { 
+                        color: '#94a3b8',
+                        maxRotation: 45,
+                        minRotation: 45
+                    },
+                    grid: { display: false }
+                }
+            }
         }
     });
 }
 
-// AUTO REFRESH EVERY 30s
+function showStatus(message, color) {
+    const status = document.getElementById("status");
+    status.textContent = message;
+    status.style.background = color;
+    status.style.opacity = '1';
+    setTimeout(() => {
+        status.style.opacity = '0';
+    }, 3000);
+}
+
+// Initialize
 fetchData();
 setInterval(fetchData, 30000);
 </script>
-
 </body>
 </html>
