@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live Trending Keywords Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body {
+    font-family: Arial;
+    background: #0f172a;
+    color: white;
+    margin: 0;
+    padding: 20px;
+}
+h1 {
+    text-align: center;
+}
+.container {
+    max-width: 1200px;
+    margin: auto;
+}
+.card {
+    background: #1e293b;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+.keyword {
+    display: inline-block;
+    background: #334155;
+    padding: 8px 12px;
+    margin: 5px;
+    border-radius: 20px;
+    font-size: 14px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🔥 Live Trending Keywords</h1>
+
+<div class="container">
+
+<div class="card">
+    <h2>Top Keywords</h2>
+    <div id="keywords"></div>
+</div>
+
+<div class="card">
+    <h2>Trending Chart</h2>
+    <canvas id="chart"></canvas>
+</div>
+
+</div>
+
+<script>
+const API_URL = "https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=T2CSW&client_ip=request_ip";
+
+let chart;
+
+async function fetchData() {
+    const res = await fetch(API_URL);
+    const data = await res.json();
+
+    let keywordCount = {};
+
+    data.results.forEach(room => {
+        // TAGS
+        (room.tags || []).forEach(tag => {
+            tag = tag.toLowerCase();
+            keywordCount[tag] = (keywordCount[tag] || 0) + room.num_users;
+        });
+
+        // SUBJECT
+        let words = (room.room_subject || "")
+            .toLowerCase()
+            .match(/\b[a-z]{4,}\b/g);
+
+        if (words) {
+            words.forEach(word => {
+                keywordCount[word] = (keywordCount[word] || 0) + 1;
+            });
+        }
+    });
+
+    // SORT
+    let sorted = Object.entries(keywordCount)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20);
+
+    updateUI(sorted);
+}
+
+function updateUI(data) {
+    const container = document.getElementById("keywords");
+    container.innerHTML = "";
+
+    data.forEach(([key, val]) => {
+        const el = document.createElement("div");
+        el.className = "keyword";
+        el.innerText = `${key} (${val})`;
+        container.appendChild(el);
+    });
+
+    updateChart(data);
+}
+
+function updateChart(data) {
+    const labels = data.map(d => d[0]);
+    const values = data.map(d => d[1]);
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(document.getElementById("chart"), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Trending Score",
+                data: values
+            }]
+        }
+    });
+}
+
+// AUTO REFRESH EVERY 30s
+fetchData();
+setInterval(fetchData, 30000);
+</script>
+
+</body>
+</html>
