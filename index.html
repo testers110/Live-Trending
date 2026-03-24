@@ -5,7 +5,6 @@
 <title>Live Trending Keywords Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-/* Your existing styles + improvements */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
     background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -24,18 +23,35 @@ body {
     font-size: 14px;
     opacity: 0;
     transition: opacity 0.3s;
+    z-index: 1000;
 }
-.status.error {
-    background: #ef4444;
+.status.error { background: #ef4444; }
+.container {
+    max-width: 1200px;
+    margin: auto;
 }
 .card {
     background: rgba(30, 41, 59, 0.8);
     backdrop-filter: blur(10px);
     border: 1px solid #334155;
-    /* ... rest of your styles */
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
 }
+.chart-container {
+    position: relative;
+    height: 400px;  /* ✅ FIXED: Explicit height */
+    width: 100%;
+}
+h1 { text-align: center; margin-bottom: 30px; }
+h2 { margin-top: 0; color: #f8fafc; }
 .keyword {
-    /* ... */
+    display: inline-block;
+    background: #334155;
+    padding: 8px 12px;
+    margin: 5px;
+    border-radius: 20px;
+    font-size: 14px;
     transition: transform 0.2s, background 0.2s;
     cursor: pointer;
 }
@@ -47,7 +63,9 @@ body {
     text-align: center;
     padding: 40px;
     color: #94a3b8;
+    font-style: italic;
 }
+small { color: #94a3b8; display: block; margin-top: 10px; }
 </style>
 </head>
 
@@ -56,93 +74,81 @@ body {
 <div class="status" id="status"></div>
 
 <div class="container">
-<div class="card">
-    <h2>🏆 Top 20 Keywords</h2>
-    <div id="keywords"><div class="loading">Loading...</div></div>
-    <small>Last updated: <span id="lastUpdate">--</span></small>
-</div>
+    <div class="card">
+        <h2>🏆 Top 20 Keywords</h2>
+        <div id="keywords"><div class="loading">Loading...</div></div>
+        <small>Last updated: <span id="lastUpdate">--</span></small>
+    </div>
 
-<div class="card">
-    <h2>📈 Trending Chart</h2>
-    <canvas id="chart"></canvas>
-</div>
+    <div class="card">
+        <h2>📈 Live Trending Chart</h2>
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+        </div>
+    </div>
 </div>
 
 <script>
 const API_URL = "https://chaturbate.com/api/public/affiliates/onlinerooms/?wm=T2CSW&client_ip=request_ip";
-
 let chart;
-let lastUpdate = 0;
 
 async function fetchData() {
     try {
-        showStatus("Fetching data...", "#f59e0b");
+        showStatus("Fetching live data...", "#f59e0b");
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         
         const res = await fetch(API_URL, {
-            cache: 'no-cache'
+            cache: 'no-cache',
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
         
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
         const data = await res.json();
+        if (!data.results?.length) throw new Error("No rooms data");
         
-        if (!data.results || !Array.isArray(data.results)) {
-            throw new Error("Invalid API response");
-        }
-
         processKeywords(data.results);
-        showStatus(`Updated: ${new Date().toLocaleTimeString()}`, "#10b981");
-        document.getElementById("lastUpdate").textContent = 
-            new Date().toLocaleTimeString();
+        showStatus(`Updated: ${new Date().toLocaleTimeString()} (${data.results.length} rooms)`, "#10b981");
+        document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString();
             
     } catch (error) {
-        console.error("Fetch error:", error);
+        console.error("API Error:", error);
         showStatus(`Error: ${error.message}`, "#ef4444");
+        document.getElementById("keywords").innerHTML = 
+            '<div class="loading" style="color: #ef4444;">Failed to load data</div>';
     }
 }
 
 function processKeywords(rooms) {
+    const stopWords = {'the':1,'and':1,'for':1,'are':1,'but':1,'not':1,'you':1,'all':1,'can':1};
     let keywordCount = {};
-    
-    // Stop words to filter common words
-    const stopWords = {
-        'the':1, 'and':1, 'for':1, 'are':1, 'but':1, 'not':1, 
-        'you':1, 'all':1, 'can':1, 'her':1, 'was':1, 'one':1,
-        'our':1, 'out':1, 'day':1, 'get':1, 'has':1, 'him':1,
-        'his':1, 'how':1, 'its':1, 'may':1, 'new':1, 'now':1,
-        'old':1, 'see':1, 'two':1, 'who':1, 'boy':1, 'did':1,
-        'its':1, 'let':1, 'put':1, 'say':1, 'she':1, 'too':1,
-        'use':1, 'come':1, 'even':1, 'want':1
-    };
 
-    rooms.forEach(room => {
-        // TAGS (weighted higher)
+    rooms.slice(0, 500).forEach(room => {  // Limit processing for performance
+        // TAGS (high weight)
         (room.tags || []).forEach(tag => {
-            tag = tag.toLowerCase().trim();
-            if (tag.length >= 3) {
-                keywordCount[tag] = (keywordCount[tag] || 0) + room.num_users;
+            const cleanTag = tag.toLowerCase().trim();
+            if (cleanTag.length >= 3) {
+                keywordCount[cleanTag] = (keywordCount[cleanTag] || 0) + (room.num_users || 1);
             }
         });
 
-        // SUBJECT (weighted lower, filter stop words)
-        let words = (room.room_subject || "")
-            .toLowerCase()
-            .replace(/[^\w\s]/g, ' ')
-            .match(/\b[a-z]{4,}\b/g);
-
-        if (words) {
-            words.forEach(word => {
-                if (!stopWords[word] && word.length >= 4) {
-                    keywordCount[word] = (keywordCount[word] || 0) + 1;
-                }
-            });
-        }
+        // SUBJECT (low weight)
+        const subject = (room.room_subject || "").toLowerCase().replace(/[^\w\s]/g, ' ');
+        const words = subject.match(/\b[a-z]{4,}\b/g) || [];
+        
+        words.slice(0, 10).forEach(word => {  // Limit words per room
+            if (!stopWords[word] && word.length >= 4) {
+                keywordCount[word] = (keywordCount[word] || 0) + 1;
+            }
+        });
     });
 
-    // Sort by score DESC, take top 20
-    let sorted = Object.entries(keywordCount)
+    const sorted = Object.entries(keywordCount)
         .filter(([key]) => key.length >= 3)
-        .sort((a, b) => b[1] - a[1])
+        .sort(([,a], [,b]) => b - a)
         .slice(0, 20);
 
     updateUI(sorted);
@@ -150,15 +156,12 @@ function processKeywords(rooms) {
 
 function updateUI(data) {
     const container = document.getElementById("keywords");
-    container.innerHTML = data.length ? "" : '<div class="loading">No data available</div>';
+    container.innerHTML = data.length ? "" : '<div class="loading">No trending keywords</div>';
 
     data.forEach(([key, val], i) => {
         const el = document.createElement("div");
         el.className = "keyword";
-        el.innerHTML = `
-            <strong>#${i+1}</strong> ${key} 
-            <span style="color: #10b981">(${val.toLocaleString()})</span>
-        `;
+        el.innerHTML = `<strong>#${i+1}</strong> ${key} <span style="color:#10b981">(${val.toLocaleString()})</span>`;
         el.title = `Score: ${val}`;
         container.appendChild(el);
     });
@@ -167,44 +170,72 @@ function updateUI(data) {
 }
 
 function updateChart(data) {
-    const ctx = document.getElementById("chart");
-    const labels = data.map(d => d[0]);
-    const values = data.map(d => d[1]);
+    const canvas = document.getElementById("chart");
+    
+    // ✅ FIXED: Destroy existing chart properly
+    if (chart) {
+        chart.destroy();
+        chart = null;
+    }
 
-    if (chart) chart.destroy();
+    const labels = data.map(([key]) => key);
+    const values = data.map(([,val]) => val);
 
-    chart = new Chart(ctx, {
+    chart = new Chart(canvas, {
         type: 'bar',
         data: {
-            labels: labels,
+            labels,
             datasets: [{
-                label: "Popularity Score",
+                label: 'Popularity Score',
                 data: values,
-                backgroundColor: 'rgba(59, 130, 246, 0.8)',
-                borderColor: 'rgba(59, 130, 246, 1)',
+                backgroundColor: (ctx) => {
+                    const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 400);
+                    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.9)');
+                    gradient.addColorStop(1, 'rgba(37, 99, 235, 0.7)');
+                    return gradient;
+                },
+                borderColor: '#3b82f6',
                 borderWidth: 2,
-                borderRadius: 8
+                borderRadius: 8,
+                borderSkipped: false,
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: {
+                duration: 1000,
+                easing: 'easeOutQuart'
+            },
             plugins: {
-                legend: { display: false }
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    titleColor: 'white',
+                    bodyColor: 'white',
+                    cornerRadius: 8
+                }
             },
             scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#334155' }
-                },
                 x: {
                     ticks: { 
-                        color: '#94a3b8',
+                        color: '#cbd5e1',
                         maxRotation: 45,
-                        minRotation: 45
+                        minRotation: 45,
+                        font: { size: 11 }
                     },
-                    grid: { display: false }
+                    grid: { color: 'transparent' }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { 
+                        color: '#94a3b8',
+                        callback: (value) => value.toLocaleString()
+                    },
+                    grid: { 
+                        color: 'rgba(83, 104, 158, 0.2)',
+                        drawBorder: false
+                    }
                 }
             }
         }
@@ -216,12 +247,10 @@ function showStatus(message, color) {
     status.textContent = message;
     status.style.background = color;
     status.style.opacity = '1';
-    setTimeout(() => {
-        status.style.opacity = '0';
-    }, 3000);
+    setTimeout(() => status.style.opacity = '0', 4000);
 }
 
-// Initialize
+// 🚀 Initialize
 fetchData();
 setInterval(fetchData, 30000);
 </script>
